@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/valyala/fasthttp"
+	"github.com/surw/fasthttp"
 	"golang.org/x/net/http/httpproxy"
 )
 

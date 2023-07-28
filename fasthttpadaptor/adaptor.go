@@ -6,7 +6,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/valyala/fasthttp"
+	"github.com/surw/fasthttp"
 )
 
 // NewFastHTTPHandlerFunc wraps net/http handler func to fasthttp
@@ -24,7 +24,7 @@ import (
 //
 // So it is advisable using this function only for quick net/http -> fasthttp
 // switching. Then manually convert net/http handlers to fasthttp handlers
-// according to https://github.com/valyala/fasthttp#switching-from-nethttp-to-fasthttp .
+// according to https://github.com/surw/fasthttp#switching-from-nethttp-to-fasthttp .
 func NewFastHTTPHandlerFunc(h http.HandlerFunc) fasthttp.RequestHandler {
 	return NewFastHTTPHandler(h)
 }
@@ -44,7 +44,7 @@ func NewFastHTTPHandlerFunc(h http.HandlerFunc) fasthttp.RequestHandler {
 //
 // So it is advisable using this function only for quick net/http -> fasthttp
 // switching. Then manually convert net/http handlers to fasthttp handlers
-// according to https://github.com/valyala/fasthttp#switching-from-nethttp-to-fasthttp .
+// according to https://github.com/surw/fasthttp#switching-from-nethttp-to-fasthttp .
 func NewFastHTTPHandler(h http.Handler) fasthttp.RequestHandler {
 	return func(ctx *fasthttp.RequestCtx) {
 		var r http.Request

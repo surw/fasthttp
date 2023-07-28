@@ -263,7 +263,7 @@ type Client struct {
 	//
 	// Disabled header names' normalization may be useful only for proxying
 	// responses to other clients expecting case-sensitive
-	// header names. See https://github.com/valyala/fasthttp/issues/57
+	// header names. See https://github.com/surw/fasthttp/issues/57
 	// for details.
 	//
 	// By default request and response header names are normalized, i.e.
@@ -756,7 +756,7 @@ type HostClient struct {
 	//
 	// Disabled header names' normalization may be useful only for proxying
 	// responses to other clients expecting case-sensitive
-	// header names. See https://github.com/valyala/fasthttp/issues/57
+	// header names. See https://github.com/surw/fasthttp/issues/57
 	// for details.
 	//
 	// By default request and response header names are normalized, i.e.
@@ -2396,7 +2396,7 @@ type PipelineClient struct {
 	//
 	// Disabled header names' normalization may be useful only for proxying
 	// responses to other clients expecting case-sensitive
-	// header names. See https://github.com/valyala/fasthttp/issues/57
+	// header names. See https://github.com/surw/fasthttp/issues/57
 	// for details.
 	//
 	// By default request and response header names are normalized, i.e.

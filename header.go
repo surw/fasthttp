@@ -2341,7 +2341,7 @@ func (h *ResponseHeader) AppendBytes(dst []byte) []byte {
 
 	// Append Content-Type only for non-zero responses
 	// or if it is explicitly set.
-	// See https://github.com/valyala/fasthttp/issues/28 .
+	// See https://github.com/surw/fasthttp/issues/28 .
 	if h.ContentLength() != 0 || len(h.contentType) > 0 {
 		contentType := h.ContentType()
 		if len(contentType) > 0 {

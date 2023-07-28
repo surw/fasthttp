@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valyala/fasthttp/fasthttputil"
+	"github.com/surw/fasthttp/fasthttputil"
 )
 
 type fakeClientConn struct {
