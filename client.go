@@ -3,6 +3,7 @@ package fasthttp
 import (
 	"bufio"
 	"crypto/tls"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -653,7 +654,9 @@ const (
 //
 // It is safe calling HostClient methods from concurrently running goroutines.
 type HostClient struct {
-	noCopy noCopy
+	Proxy               string
+	UseProxyConnectMode bool
+	noCopy              noCopy
 
 	// Comma-separated list of upstream HTTP server host addresses,
 	// which are passed to Dial in a round-robin manner.
@@ -1311,6 +1314,80 @@ func (c *HostClient) do(req *Request, resp *Response) (bool, error) {
 	return ok, err
 }
 
+func (c *HostClient) writeRequest(req *Request, w *bufio.Writer) error {
+	if len(req.Header.Host()) == 0 || req.parsedURI {
+		uri := req.URI()
+		host := uri.Host()
+		if len(req.Header.Host()) == 0 {
+			if len(host) == 0 {
+				return errRequestHostRequired
+			} else {
+				req.Header.SetHostBytes(host)
+			}
+		} else if !req.UseHostHeader {
+			req.Header.SetHostBytes(host)
+		}
+		if len(c.Proxy) < 1 || c.UseProxyConnectMode {
+			req.Header.SetRequestURIBytes(uri.RequestURI())
+		}
+
+		if len(uri.username) > 0 {
+			// RequestHeader.SetBytesKV only uses RequestHeader.bufKV.key
+			// So we are free to use RequestHeader.bufKV.value as a scratch pad for
+			// the base64 encoding.
+			nl := len(uri.username) + len(uri.password) + 1
+			nb := nl + len(strBasicSpace)
+			tl := nb + base64.StdEncoding.EncodedLen(nl)
+			if tl > cap(req.Header.bufKV.value) {
+				req.Header.bufKV.value = make([]byte, 0, tl)
+			}
+			buf := req.Header.bufKV.value[:0]
+			buf = append(buf, uri.username...)
+			buf = append(buf, strColon...)
+			buf = append(buf, uri.password...)
+			buf = append(buf, strBasicSpace...)
+			base64.StdEncoding.Encode(buf[nb:tl], buf[:nl])
+			req.Header.SetBytesKV(strAuthorization, buf[nl:tl])
+		}
+	}
+
+	if req.bodyStream != nil {
+		return req.writeBodyStream(w)
+	}
+
+	body := req.bodyBytes()
+	var err error
+	if req.onlyMultipartForm() {
+		body, err = marshalMultipartForm(req.multipartForm, req.multipartFormBoundary)
+		if err != nil {
+			return fmt.Errorf("error when marshaling multipart form: %w", err)
+		}
+		req.Header.SetMultipartFormBoundary(req.multipartFormBoundary)
+	}
+
+	hasBody := false
+	if len(body) == 0 {
+		body = req.postArgs.QueryString()
+	}
+	if len(body) != 0 || !req.Header.ignoreBody() {
+		hasBody = true
+		req.Header.SetContentLength(len(body))
+	}
+
+	if _, err = w.Write(req.Header.Header()); err != nil {
+		return err
+	}
+
+	if hasBody {
+		_, err = w.Write(body)
+	} else if len(body) > 0 {
+		if req.secureErrorLogMessage {
+			return fmt.Errorf("non-zero body for non-POST request")
+		}
+		return fmt.Errorf("non-zero body for non-POST request. body=%q", body)
+	}
+	return err
+}
 func (c *HostClient) doNonNilReqResp(req *Request, resp *Response) (bool, error) {
 	if req == nil {
 		// for debugging purposes
@@ -1396,7 +1473,7 @@ func (c *HostClient) doNonNilReqResp(req *Request, resp *Response) (bool, error)
 	}
 
 	bw := c.acquireWriter(conn)
-	err = req.Write(bw)
+	err = c.writeRequest(req, bw)
 
 	if resetConnection {
 		req.Header.ResetConnectionClose()
@@ -1947,15 +2024,57 @@ func (c *HostClient) dialHostHard(dialTimeout time.Duration) (conn net.Conn, err
 	}
 	deadline := time.Now().Add(timeout)
 	for n > 0 {
-		addr := c.nextAddr()
-		tlsConfig := c.cachedTLSConfig(addr)
-		conn, err = dialAddr(addr, dial, c.DialDualStack, c.IsTLS, tlsConfig, c.WriteTimeout)
-		if err == nil {
-			return conn, nil
-		}
 		if time.Since(deadline) >= 0 {
 			break
 		}
+		addr := c.nextAddr()
+		if len(c.Proxy) > 0 {
+			var proxyHost = c.Proxy
+			var proxyAuth string
+			{
+				if strings.Contains(proxyHost, "@") {
+					split := strings.Split(proxyHost, "@")
+					proxyAuth = base64.StdEncoding.EncodeToString([]byte(split[0]))
+					proxyHost = split[1]
+				}
+			}
+			tlsConfig := c.cachedTLSConfig(proxyHost)
+			conn, err = dialAddr(proxyHost, dial, c.DialDualStack, c.IsTLS, tlsConfig, c.WriteTimeout)
+			if err != nil {
+				continue
+			}
+			if c.UseProxyConnectMode {
+				req := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n", addr, addr)
+				if proxyAuth != "" {
+					req += "Proxy-Authorization: Basic " + proxyAuth + "\r\n"
+				}
+				req += "\r\n"
+
+				if _, err := conn.Write([]byte(req)); err != nil {
+					continue
+				}
+
+				res := AcquireResponse()
+				defer ReleaseResponse(res)
+
+				res.SkipBody = true
+
+				if err := res.Read(bufio.NewReader(conn)); err != nil {
+					conn.Close()
+				}
+				if res.Header.StatusCode() != 200 {
+					conn.Close()
+				}
+			}
+			return
+		} else {
+			tlsConfig := c.cachedTLSConfig(addr)
+			conn, err = dialAddr(addr, dial, c.DialDualStack, c.IsTLS, tlsConfig, c.WriteTimeout)
+			if err == nil {
+				return conn, nil
+			}
+		}
+
 		n--
 	}
 	return nil, err
@@ -1963,6 +2082,24 @@ func (c *HostClient) dialHostHard(dialTimeout time.Duration) (conn net.Conn, err
 
 func (c *HostClient) cachedTLSConfig(addr string) *tls.Config {
 	if !c.IsTLS {
+		return nil
+	}
+
+	c.tlsConfigMapLock.Lock()
+	if c.tlsConfigMap == nil {
+		c.tlsConfigMap = make(map[string]*tls.Config)
+	}
+	cfg := c.tlsConfigMap[addr]
+	if cfg == nil {
+		cfg = newClientTLSConfig(c.TLSConfig, addr)
+		c.tlsConfigMap[addr] = cfg
+	}
+	c.tlsConfigMapLock.Unlock()
+
+	return cfg
+}
+func (c *HostClient) cachedTLSProxyConfig(addr string) *tls.Config {
+	if !strings.HasPrefix(addr, "https://") {
 		return nil
 	}
 
